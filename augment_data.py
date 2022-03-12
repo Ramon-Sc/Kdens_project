@@ -2,7 +2,7 @@ import numpy as np
 from sklearn.preprocessing import MinMaxScaler
 from scipy.spatial.distance import euclidean
 #todo:
-# retransform synthetic data to original feature-scale
+
 # data out
 #
 
@@ -13,13 +13,12 @@ def main():
     k=5
 
     ###
-    X_pos,X_neg,scaler=preprocessing(path)
-    print("scale ",scaler.scale_)
+    X_pos,X_neg,data_min,data_max=preprocessing(path)
 
     ### test
     lst=[]
-    for i in range (10):
-        x_synth = gen_synth_example(X_pos,X_neg,k,scaler)
+    for i in range (100):
+        x_synth = gen_synth_example(X_pos,X_neg,k,data_min,data_max)
         lst.append(x_synth)
 
     for ex in lst:
@@ -48,9 +47,9 @@ def preprocessing(path):
     scaler.fit(data)
     data = scaler.transform(data)
 
-    #mins and maxes may be used later on
-    min_arr=scaler.data_min_
-    max_arr=scaler.data_max_
+    #mins and maxes used later on
+    data_min=scaler.data_min_
+    data_max=scaler.data_max_
 
     #retrieve positive and negative examples from data via boolean mask
     mask_pos = (data[:, 0] == 1)
@@ -60,16 +59,14 @@ def preprocessing(path):
     X_pos=data[mask_pos,1:]
     X_neg=data[mask_neg,1:]
 
-    return X_pos,X_neg,scaler
+    return X_pos,X_neg,data_min,data_max
 
 
-def gen_synth_example(X_pos,X_neg,k,scaler):
+def gen_synth_example(X_pos,X_neg,k,data_min,data_max):
 
     num_features=X_pos.shape[1]
     num_ex_pos=X_pos.shape[0]
     num_ex_neg=X_neg.shape[0]
-    data_min=scaler.data_min_
-    data_max=scaler.data_max_
 
     while True:
         x_synth=np.random.rand(num_features)
