@@ -1,7 +1,10 @@
 import numpy as np
 from sklearn.preprocessing import MinMaxScaler
 from scipy.spatial.distance import euclidean
-#todo retransform synthetic data to original feature-scale
+#todo:
+# retransform synthetic data to original feature-scale
+# data out
+#
 
 
 def main():
@@ -10,16 +13,17 @@ def main():
     k=5
 
     ###
-    X_pos,X_neg=preprocessing(path)
+    X_pos,X_neg,scaler=preprocessing(path)
+    print("scale ",scaler.scale_)
 
     ### test
     lst=[]
-    for i in range (1000):
-        x_synth = gen_synth_sample(X_pos,X_neg,k)
+    for i in range (10):
+        x_synth = gen_synth_example(X_pos,X_neg,k,scaler)
         lst.append(x_synth)
 
-    # for ex in lst:
-    #     print(ex)
+    for ex in lst:
+        print(ex,"\n")
 
     print(np.sum(np.array(lst),axis=0)[0])
     ### end test
@@ -48,7 +52,7 @@ def preprocessing(path):
     min_arr=scaler.data_min_
     max_arr=scaler.data_max_
 
-    #retrieve positive and negative samples from data via boolean mask
+    #retrieve positive and negative examples from data via boolean mask
     mask_pos = (data[:, 0] == 1)
     mask_neg = (data[:, 0] == 0)
 
@@ -56,20 +60,22 @@ def preprocessing(path):
     X_pos=data[mask_pos,1:]
     X_neg=data[mask_neg,1:]
 
-    return X_pos,X_neg
+    return X_pos,X_neg,scaler
 
 
-def gen_synth_sample(X_pos,X_neg,k):
+def gen_synth_example(X_pos,X_neg,k,scaler):
 
     num_features=X_pos.shape[1]
     num_ex_pos=X_pos.shape[0]
     num_ex_neg=X_neg.shape[0]
+    data_min=scaler.data_min_
+    data_max=scaler.data_max_
 
     while True:
         x_synth=np.random.rand(num_features)
 
         #sorted euclidean distances synthetic example to every original example:
-        dist_to_pos= np.sort(
+        dist_to_pos=np.sort(
         np.sqrt(np.sum(np.square(X_pos-x_synth),axis=1))
         )
 
@@ -96,8 +102,10 @@ def gen_synth_sample(X_pos,X_neg,k):
         [True,False],
         p=[tup_prob[class_label],1-tup_prob[class_label]]
         ):
+            example=np.concatenate((np.array([class_label]),x_synth))
+            example_rescaled=example*(data_max-data_min)+data_min
 
-            return np.concatenate((np.array([class_label]),x_synth))
+            return example_rescaled
             break
 
 def create_synthetic_data():
