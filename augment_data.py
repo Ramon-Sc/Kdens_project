@@ -1,10 +1,11 @@
 import numpy as np
+import math
 from sklearn.preprocessing import MinMaxScaler
-from scipy.spatial.distance import euclidean
+
 #todo:
 
 # data out
-#
+# option specify num of pos out num of neg out
 
 
 def main():
@@ -27,7 +28,6 @@ def main():
     print(np.sum(np.array(lst),axis=0)[0])
     ### end test
 
-
 def preprocessing(path):
     #import CSV file
     data = np.genfromtxt(path, delimiter=',', dtype='U')
@@ -46,6 +46,8 @@ def preprocessing(path):
     scaler = MinMaxScaler()
     scaler.fit(data)
     data = scaler.transform(data)
+
+
 
     #mins and maxes used later on
     data_min=scaler.data_min_
@@ -91,10 +93,20 @@ def gen_synth_example(X_pos,X_neg,k,data_min,data_max):
         scaled_mean_dist_to_k_pos=mean_dist_to_k_pos/max_dist
         scaled_mean_dist_to_k_neg=mean_dist_to_k_neg/max_dist
 
-        #index of max prob in tup_prob(prob(class=0),prob(class=1)) = classlabel
-        tup_prob=(1-scaled_mean_dist_to_k_neg,1-scaled_mean_dist_to_k_pos)
-        class_label=tup_prob.index(max(tup_prob))
 
+        #INDEX OF MAX(TUP_PROB(PROB(CLASS=0),PROB(CLASS=1)) = CLASSLABEL
+
+        #tup_prob=(1-scaled_mean_dist_to_k_neg,1-scaled_mean_dist_to_k_pos)
+
+        #tup_prob alternative non linear relationship dist to prob:
+        logbase=10
+        tup_prob=(
+        min(1,-math.log(scaled_mean_dist_to_k_neg,logbase)),
+        min(1,-math.log(scaled_mean_dist_to_k_pos,logbase))
+        )
+
+        class_label=tup_prob.index(max(tup_prob))
+        #print(tup_prob,class_label)
         if np.random.choice(
         [True,False],
         p=[tup_prob[class_label],1-tup_prob[class_label]]
