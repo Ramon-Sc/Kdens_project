@@ -14,11 +14,15 @@ from sklearn.svm import SVC
 #metrics
 from sklearn.metrics import roc_auc_score
 from sklearn.metrics import f1_score
+from sklearn.metrics import matthews_corrcoef
+from sklearn.metrics import auc
 
 
 #my modules
-from densmap_augment_mindensscaled import kdens_augment
+from kdens_mindensscaled import kdens_augment
 from GNUS import gnus
+
+
 #0
 def preprocessing(path):
     #import CSV file
@@ -64,7 +68,6 @@ def split(data):
             break
         return data[idx_train],data[idx_test]
 
-
 #2 MinMax scaling
 def scaling(data):
     #minmax feature scaling
@@ -84,30 +87,111 @@ def model_train(train_X,train_y):
 
     return clf_lr,clf_rdf,clf_svm_lin,clf_svm_rbf,clf_svm_poly
 
-def model_predict(test_X):
+def model_predict(test_X,clf_lr,clf_rdf,clf_svm_lin,clf_svm_rbf,clf_svm_poly):
     pred_labels_lr=clf_lr.predict(test_X)
     pred_labels_rdf=clf_rdf.predict(test_X)
     pred_labels_svm_lin=clf_svm_lin.predict(test_X)
     pred_labels_svm_rbf=clf_svm_rbf.predict(test_X)
     pred_labels_svm_poly=clf_svm_poly.predict(test_X)
 
-    return pred_labels_lr,pred_labels_rdf,pred_labels_svm_lin,pred_labels_svm_rbf,pred_labels_svm_poly
+    return (pred_labels_lr,pred_labels_rdf,pred_labels_svm_lin,pred_labels_svm_rbf,pred_labels_svm_poly)
 
-def evaluate():
-    pass
+def evaluate(pred_labels,test_y):
 
-def PIPE(data):
-    'this pipeline is executed for every CV split in num_mccv'
+    roc_auc=roc_auc_score(test_y,pred_labels)
+    precision,recall=precision_recall_curve(test_y,pred_labels)
+    auc_pr=auc(recall,precision)
+    f1_score=f1_score(test_y,pred_labels)
+    mccoef=matthews_corrcoef(test_y,pred_labels)
 
+    return np.array((roc_auc,auc_pr,f1_score,mccoef))
+
+def synth_only_splitter(
+    writer_queue,
+    train_pos_orig,
+    train_neg_orig,
+    synth_pos,
+    synth_neg,
+    num_synths_needed,
+    iter_mccv,
+    code_aug,
+    noise_std,
+    k
+    ):
+
+    num_synth_pos=synth_pos.shape[0]
+    #minmax scaling 2
+    synth_synth_data=np.rowstack((synth_pos,synth_neg))
+    scaled_synth_data_2,scaler_2=scaling(synth_data)
+
+    #prepare training data
+    scaled_synth_pos=scaled_synth_data_2[:num_synth_pos,:]
+    scaled_synth_neg=scaled_synth_data_2[num_synth_pos:,:]
+
+    for code_synthonly in (0,1):
+        #random generator instance for choice of examples to augment or use as synthetic pos/neg train data
+        r_gen=np.random.default_rng()
+
+        if not code_synthonly:
+        #CLASSIC AUGMENTATION(code=0): num of synths added to minority class = difference(num_minoritiy,num_majority)
+            train_pos=np.rowstack((train_pos_orig,r_gen.choice(scaled_synth_pos,num_synths_needed)
+            train_neg=train_neg_orig
+
+        else:
+        #SYNTH ONLY(code=1): num examples per class = num examples majority class of original dataset =num_neg
+            train_pos=r_gen.choice(scaled_synth_pos,num_neg)
+            train_neg=r_gen.choice(scaled_synth_neg,num_neg)
+
+        train_data=np.rowstack((train_pos,train_neg))
+        train_X=train_data[:,1:]
+        train_y=train_data[:,0]
+
+        #model training
+        clf_lr,clf_rdf,clf_svm_lin,clf_svm_rbf,clf_svm_poly=model_train(train_X,train_y)
+
+        #model predictions
+        pred_labels_tup=model_predict(test_X)
+
+        #model evaluation
+        for code_model,pred_labels in enumerate(pred_labels_tup):
+            scores=evaluate(pred_labels)
+            csv_row=np.append((iter_mccv,code_synthonly,code_aug,code_model,noise_std,k),scores)
+            writer_queue.put(csv_row)
+
+def writer(writer_queue,csv_out_name):
+    with open (csv_out_name,"w+") as f:
+        writer= csv.writer(f)
+        row=writer_queue.get()
+
+        writer.writerow(row)
+
+def PIPE(data,iter_mccv,writer_queue):
+
+    '''
+    this pipeline is executed for every CV split in num_mccv
+    order in csv file:
+    iter_mccv(0-999),synth_only(0,1),aug_meth(0-4),model(0-4),noise_std(float),k(int),AUCROC(float),AUCPR(float),F1(float),MMCoef(float)
+    '''
+
+    code_kdens=0
+    code_gnus=1
+    code_smote=2
+    code_adasyn=3
+    code_null=4
 #1 mccv split###################################################################
     train,test=split(data)
+
+    test_X=test[:,1:]
+    test_y=test[:,0]
 
 #2 minmax scaling (normalization)###############################################
     scaled_data_1,scaler_1=scaling(train)
 
-# calculate class imbalance and number of synths to supplement the minority class with
+# calculate class imbalance and number of synths to supplement the minority class with (in augment)
     mask_pos=(scaled_data_1[:, 0] == 1)
-    num_pos=scaled_data_1[mask_pos].shape[0]
+    train_pos_orig=scaled_data_1[mask_pos]
+    train_neg_orig=scaled_data_1[np.invert(mask_pos)]
+    num_pos=train_pos_orig.shape[0]
     num_neg=num_train-num_pos
     num_synths_needed=num_neg-num_pos
 
@@ -122,33 +206,27 @@ def PIPE(data):
             synth_kdens_pos,synth_kdens_neg=kdens_augment(scaled_data_1,k,k,)
 
             #rescale
-            synth_kdens_pos,synth_kdens_pos=map(scaler_1.inverse_transform,[synth_kdens_pos,synth_kdens_neg])
+            synth_kdens_pos,synth_kdens_neg=map(scaler_1.inverse_transform,[synth_kdens_pos,synth_kdens_neg])
 
-            num_synth_pos=synth_kdens_pos.shape[0]
-            #minmax scaling 2
-            synth_kdens_data=np.rowstack((synth_kdens_pos,synth_kdens_neg))
-            scaled_kdens_data_2,scaler_2=scaling(synth_kdens_data)
+            #
+            synth_only_splitter(
+            writer_queue,
+            train_pos_orig,
+            train_neg_orig,
+            synth_kdens_pos,
+            synth_kdens_neg,
+            num_synths_needed,
+            iter_mccv,
+            code_kdens,
+            noise_std,
+            k
+            )
 
-            #prepare training data
-            scaled_synth_kdens_pos=scaled_kdens_data_2[:num_synth_pos,:]
-            scaled_synth_kdens_neg=scaled_kdens_data_2[num_synth_pos:,:]
-
-            #random generator instance for choice of examples to augment or use as synthetic pos/neg train data
-            r_gen=np.random.default_rng
-
-            #synth only: num examples per class = num examples majority class of original dataset =num_neg
-            train_pos=r_gen.choice(scaled_synth_kdens_pos,num_neg)
-            train_neg=r_gen.choice(scaled_synth_kdens_neg,num_neg)
-
-
-
-            queue.put(row_synthonly)
-            ###todo file out
-            queue.put(row_augented)
 
     # B) gnus with different noise levels
-    for noise_std in lst_noise_std:
         synth_gnus_pos,synth_gnus_neg=gnus(scaled_data_1,)
+        #rescale
+        synth_gnus_pos,synth_gnus_neg=map(scaler_1.inverse_transform,[synth_gnus_pos,synth_gnus_neg])
 
         ###todo file out
         queue.put(row)
@@ -170,25 +248,6 @@ def PIPE(data):
     #assuming positve class is always minority class
 
 
-
-#6 minmax scaling
-    scaled_data_2,scaler_2=scaling(synth_data)
-
-#7 Model training
-
-
-
-#8 prediction
-
-
-#9 Evaluation
-    f1_score=f1_score(test_labels,pred_labels_lr)
-    roc_auc_score=roc_auc_score
-
-#10 to csv
-
-
-def write_to_csv(writer_queue):
 
 
 if __name__ == '__main__':
@@ -221,8 +280,8 @@ if __name__ == '__main__':
     write_process=multiprocessing.Process(target=write_to_csv , args=(writer_queue, csv_out_name))
 
     #start num_mccv processes:
-    for _ in range(num_mccv):
-        p=multiprocessing.Process(target=PIPE,args=(data))
+    for iter_mccv in range(num_mccv):
+        p=multiprocessing.Process(target=PIPE,args=(data,iter_mccv))
         p.start()
         processes.append(p)
 
