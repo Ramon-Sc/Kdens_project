@@ -11,6 +11,10 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.svm import SVC
 
+#smote, adasyn
+from imblearn.over_sampling import SMOTE
+from imblearn.over_sampling import ADASYN
+
 #metrics
 from sklearn.metrics import roc_auc_score
 from sklearn.metrics import f1_score
@@ -97,7 +101,6 @@ def model_predict(test_X,clf_lr,clf_rdf,clf_svm_lin,clf_svm_rbf,clf_svm_poly):
     return (pred_labels_lr,pred_labels_rdf,pred_labels_svm_lin,pred_labels_svm_rbf,pred_labels_svm_poly)
 
 def evaluate(pred_labels,test_y):
-
     roc_auc=roc_auc_score(test_y,pred_labels)
     precision,recall=precision_recall_curve(test_y,pred_labels)
     auc_pr=auc(recall,precision)
@@ -165,7 +168,7 @@ def writer(writer_queue,csv_out_name):
 
         writer.writerow(row)
 
-def PIPE(data,iter_mccv,writer_queue):
+def PIPE(data,iter_mccv,num_candidates,writer_queue):
 
     '''
     this pipeline is executed for every CV split in num_mccv
@@ -203,12 +206,12 @@ def PIPE(data,iter_mccv,writer_queue):
 
             # using the same k for umap and subsequent kdens since low dim k nn are positioned according to high dim k nn
             # theres probably no point in this function having to "k" arguments but here we are..
-            synth_kdens_pos,synth_kdens_neg=kdens_augment(scaled_data_1,k,k,)
+            synth_kdens_pos,synth_kdens_neg=kdens_augment(scaled_data_1,num_candidates,k,k,)
 
             #rescale
             synth_kdens_pos,synth_kdens_neg=map(scaler_1.inverse_transform,[synth_kdens_pos,synth_kdens_neg])
 
-            #
+
             synth_only_splitter(
             writer_queue,
             train_pos_orig,
@@ -223,30 +226,95 @@ def PIPE(data,iter_mccv,writer_queue):
             )
 
 
+
     # B) gnus with different noise levels
-        synth_gnus_pos,synth_gnus_neg=gnus(scaled_data_1,)
+    for noise_std in lst_noise_std:
+        synth_gnus_pos,synth_gnus_neg=gnus(scaled_data_1,noise_std,num_candidates)
         #rescale
         synth_gnus_pos,synth_gnus_neg=map(scaler_1.inverse_transform,[synth_gnus_pos,synth_gnus_neg])
 
-        ###todo file out
-        queue.put(row)
+        #k=0 since there is no use of a k value in gnus but i didnt want to put N.A. in csv
+        k=0
+
+        #rest of pipe stuff and "to csv" eventually
+        synth_only_splitter(
+        writer_queue,
+        train_pos_orig,
+        train_neg_orig,
+        synth_gnus_pos,
+        synth_gnus_neg,
+        num_synths_needed,
+        iter_mccv,
+        code_gnus,
+        noise_std,
+        k
+        )
 
 
 
+    #smote and adasyn need X and y to be seperated:
+    scaled_data_1_X=scaled_data_1[:,1:]
+    scaled_data_1_y=scaled_data_1[:,0]
+    #params
+    k=5
+    noise_std=0
+    n_samples_new=1000
+    ratio={pos:n_samples_new,neg:n_samples_new}
 
-    #random choice of examples to augment or use as synthetic pos/neg train data
-    r_gen=np.random.default_rng
 
-    #synth only
-    num_ex=int(num_train/2)
-    pos=rgn.choice(synth_pos,size=num_ex)
-    neg=rng.choice(synth_neg,size=num_ex)
+    # C) SMOTE
+    smote=SMOTE(k_neighbors=k,ratio=ratio)
+    X_smote,y_smote=smote.fit_sample(scaled_data_1_X,scaled_data_1_y)
+    synth_smote=np.column_stack((y_smote,X_smote))
+
+    #retrieve pos and neg
+    mask_pos=(synth_smote[:,0] == 1)
+    mask_neg=(synth_smote[:,0] == 0)
+    syth_smote_pos=synth_smote[mask_pos]
+    synth_smote_neg=synth_smote[mask_neg]
+
+    #rescaling
+    synth_smote_pos,synth_smote_neg=map(scaler_1.inverse_transform,[synth_smote_pos,synth_smote_neg])
+
+    #rest of pipe stuff and "to csv" eventually
+    synth_only_splitter(
+    writer_queue,
+    train_pos_orig,
+    train_neg_orig,
+    synth_smote_pos,
+    synth_smote_neg,
+    num_synths_needed,
+    iter_mccv,
+    code_smote,
+    noise_std,
+    k
+    )
 
 
-    #balanced by augmentation
-    #calculate class imbalance
-    #assuming positve class is always minority class
 
+    # D) ADASYN
+    adasyn=ADASYN(n_neighbors=k,ratio=ratio)
+    X_adasyn,y_adasyn=adasyn.fit_sample(scaled_data_1_X,scaled_data_1_y)
+    synth_adasyn=np.column_stack((y_adasyn,X_adasyn))
+
+    #retrieve pos and neg
+    mask_pos=(synth_adasyn[:,0] == 1)
+    mask_neg=(synth_adasyn[:,0] == 0)
+    synth_adasyn_pos=synth_adasyn[mask_pos]
+    synth_adasyn_neg=synth_adasyn[mask_neg]
+
+    synth_only_splitter(
+    writer_queue,
+    train_pos_orig,
+    train_neg_orig,
+    synth_adasyn_pos,
+    synth_adasyn_neg,
+    num_synths_needed,
+    iter_mccv,
+    code_adasyn,
+    noise_std,
+    k
+    )
 
 
 
@@ -255,7 +323,7 @@ if __name__ == '__main__':
     parser=argparse.ArgumentParser()
 
     parser.add_argument("-nmccv","--num_mccv",help="number of monte carlo crossvalidation splits", type=int, default=1000,)
-    parser.add_argument("-nc","--num_cand",help="number of candidates generated from parent points", type=int, default=1000,)
+    parser.add_argument("-nc","--num_cand",help="number of candidates generated from parent points", type=int, default=2000,)
     parser.add_argument("-uk","--umap_k",help="umap k", type=int, default=30,)
     parser.add_argument("-kdk","--kdens_k",help="kdens_k", type=int, default=30,)
     parser.add_argument("-gnstd","--gnoise_std",help="standard dev gaussian noise", type=int, default=0.01,)
@@ -272,7 +340,7 @@ if __name__ == '__main__':
 
     num_mccv=args.num_mccv
 
-
+    num_candidates=args.num_cand
     #multiproessing part############################################################
 
     processes=[]
@@ -281,7 +349,7 @@ if __name__ == '__main__':
 
     #start num_mccv processes:
     for iter_mccv in range(num_mccv):
-        p=multiprocessing.Process(target=PIPE,args=(data,iter_mccv))
+        p=multiprocessing.Process(target=PIPE,args=(data,iter_mccv,num_candidates,writer_queue))
         p.start()
         processes.append(p)
 
