@@ -1,10 +1,13 @@
 import argparse
 import csv
 import numpy as np
+from multiprocessing import Process, Queue
 
 #sklearn stuff
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import ShuffleSplit
+from sklearn.metrics import pairwise_distances
+from scipy.spatial.distance import pdist, squareform
 
 #classifier
 from sklearn.linear_model import LogisticRegression
@@ -18,13 +21,14 @@ from imblearn.over_sampling import ADASYN
 #metrics
 from sklearn.metrics import roc_auc_score
 from sklearn.metrics import f1_score
+from sklearn.metrics import precision_recall_curve
 from sklearn.metrics import matthews_corrcoef
 from sklearn.metrics import auc
 
 
 #my modules
 from kdens_mindensscaled import kdens_augment
-from GNUS import gnus
+from gnus import gnus
 
 
 #0
@@ -40,7 +44,7 @@ def preprocessing(path):
     data=np.char.rstrip(data,'"')
 
     #cast everything to float
-    data.astype(float)
+    data=data.astype(float)
 
     return data
 
@@ -55,22 +59,37 @@ def split(data):
     #try max 1000 splits
     for i in range(1000):
         #random split
-        test_size=rng.random()
-        #mccv split
-        rs=SchuffleSplit(n_splits=1,test_size=test_size)
-        idx_train,idx_test=rs.split(X)
+        test_size=rng.integers(y.shape[0])
 
-        #prevent train or test set being devoid of samples of one class
-        if 1 not in y[idx_train] or if 0 not in y[idx_train]:
+        if test_size*y.shape[0] <1:
             continue
 
-        if 1 not in y[idx_test] or if 0 not in y[idx_test]:
+        #mccv split
+        rs=ShuffleSplit(n_splits=1,test_size=test_size)
+        idx_train,idx_test=next(rs.split(X))
+
+        #print("y-idx-train",y[idx_train])
+        #print("y_idx_test",y[idx_test])
+        #prevent empty training or test set
+        if idx_train.shape == 0 or idx_test.shape == 0:
+            print("one")
+            continue
+
+        #prevent train or test set being devoid of samples of one class
+        elif 1 not in y[idx_train] or 0 not in y[idx_train]:
+            print("two")
+            continue
+
+        elif 1 not in y[idx_test] or 0 not in y[idx_test]:
+            print("three")
             continue
 
         if i == 999:
             print("failed to split data in train, test wothout one set having no examples of one class")
             break
-        return data[idx_train],data[idx_test]
+        else:
+            break
+    return data[idx_train],data[idx_test]
 
 #2 MinMax scaling
 def scaling(data):
@@ -102,12 +121,13 @@ def model_predict(test_X,clf_lr,clf_rdf,clf_svm_lin,clf_svm_rbf,clf_svm_poly):
 
 def evaluate(pred_labels,test_y):
     roc_auc=roc_auc_score(test_y,pred_labels)
-    precision,recall=precision_recall_curve(test_y,pred_labels)
+    #threshold of precision_recall_curveis not used anywhere in this script
+    precision,recall,threshold=precision_recall_curve(test_y,pred_labels)
     auc_pr=auc(recall,precision)
-    f1_score=f1_score(test_y,pred_labels)
+    f1=f1_score(test_y,pred_labels)
     mccoef=matthews_corrcoef(test_y,pred_labels)
 
-    return np.array((roc_auc,auc_pr,f1_score,mccoef))
+    return np.array((roc_auc,auc_pr,f1,mccoef))
 
 def synth_only_splitter(
     writer_queue,
@@ -115,6 +135,8 @@ def synth_only_splitter(
     train_neg_orig,
     synth_pos,
     synth_neg,
+    test_X,
+    test_y,
     num_synths_needed,
     iter_mccv,
     code_aug,
@@ -124,7 +146,7 @@ def synth_only_splitter(
 
     num_synth_pos=synth_pos.shape[0]
     #minmax scaling 2
-    synth_synth_data=np.rowstack((synth_pos,synth_neg))
+    synth_data=np.row_stack((synth_pos,synth_neg))
     scaled_synth_data_2,scaler_2=scaling(synth_data)
 
     #prepare training data
@@ -137,15 +159,16 @@ def synth_only_splitter(
 
         if not code_synthonly:
         #CLASSIC AUGMENTATION(code=0): num of synths added to minority class = difference(num_minoritiy,num_majority)
-            train_pos=np.rowstack((train_pos_orig,r_gen.choice(scaled_synth_pos,num_synths_needed)
+            train_pos=np.row_stack((train_pos_orig,r_gen.choice(scaled_synth_pos,num_synths_needed)))
             train_neg=train_neg_orig
 
         else:
         #SYNTH ONLY(code=1): num examples per class = num examples majority class of original dataset =num_neg
+            num_neg=train_neg_orig.shape[0]
             train_pos=r_gen.choice(scaled_synth_pos,num_neg)
             train_neg=r_gen.choice(scaled_synth_neg,num_neg)
 
-        train_data=np.rowstack((train_pos,train_neg))
+        train_data=np.row_stack((train_pos,train_neg))
         train_X=train_data[:,1:]
         train_y=train_data[:,0]
 
@@ -153,11 +176,12 @@ def synth_only_splitter(
         clf_lr,clf_rdf,clf_svm_lin,clf_svm_rbf,clf_svm_poly=model_train(train_X,train_y)
 
         #model predictions
-        pred_labels_tup=model_predict(test_X)
+        #[--y_pred_lr--],[--y_pred_rdf--],...
+        pred_labels_tup=model_predict(test_X,clf_lr,clf_rdf,clf_svm_lin,clf_svm_rbf,clf_svm_poly)
 
         #model evaluation
         for code_model,pred_labels in enumerate(pred_labels_tup):
-            scores=evaluate(pred_labels)
+            scores=evaluate(pred_labels,test_y)
             csv_row=np.append((iter_mccv,code_synthonly,code_aug,code_model,noise_std,k),scores)
             writer_queue.put(csv_row)
 
@@ -168,7 +192,7 @@ def writer(writer_queue,csv_out_name):
 
         writer.writerow(row)
 
-def PIPE(data,iter_mccv,num_candidates,writer_queue):
+def PIPE(data,iter_mccv,num_candidates,lst_noise_std,lst_k,writer_queue):
 
     '''
     this pipeline is executed for every CV split in num_mccv
@@ -192,6 +216,7 @@ def PIPE(data,iter_mccv,num_candidates,writer_queue):
 
 # calculate class imbalance and number of synths to supplement the minority class with (in augment)
     mask_pos=(scaled_data_1[:, 0] == 1)
+    num_train=scaled_data_1.shape[0]
     train_pos_orig=scaled_data_1[mask_pos]
     train_neg_orig=scaled_data_1[np.invert(mask_pos)]
     num_pos=train_pos_orig.shape[0]
@@ -206,7 +231,7 @@ def PIPE(data,iter_mccv,num_candidates,writer_queue):
 
             # using the same k for umap and subsequent kdens since low dim k nn are positioned according to high dim k nn
             # theres probably no point in this function having to "k" arguments but here we are..
-            synth_kdens_pos,synth_kdens_neg=kdens_augment(scaled_data_1,num_candidates,k,k,)
+            synth_kdens_pos,synth_kdens_neg=kdens_augment(scaled_data_1,num_candidates,k,k,noise_std)
 
             #rescale
             synth_kdens_pos,synth_kdens_neg=map(scaler_1.inverse_transform,[synth_kdens_pos,synth_kdens_neg])
@@ -218,6 +243,8 @@ def PIPE(data,iter_mccv,num_candidates,writer_queue):
             train_neg_orig,
             synth_kdens_pos,
             synth_kdens_neg,
+            test_X,
+            test_y,
             num_synths_needed,
             iter_mccv,
             code_kdens,
@@ -243,6 +270,8 @@ def PIPE(data,iter_mccv,num_candidates,writer_queue):
         train_neg_orig,
         synth_gnus_pos,
         synth_gnus_neg,
+        test_X,
+        test_y,
         num_synths_needed,
         iter_mccv,
         code_gnus,
@@ -259,7 +288,7 @@ def PIPE(data,iter_mccv,num_candidates,writer_queue):
     k=5
     noise_std=0
     n_samples_new=1000
-    ratio={pos:n_samples_new,neg:n_samples_new}
+    ratio={1:n_samples_new,0:n_samples_new}
 
 
     # C) SMOTE
@@ -283,6 +312,8 @@ def PIPE(data,iter_mccv,num_candidates,writer_queue):
     train_neg_orig,
     synth_smote_pos,
     synth_smote_neg,
+    test_X,
+    test_y,
     num_synths_needed,
     iter_mccv,
     code_smote,
@@ -309,6 +340,8 @@ def PIPE(data,iter_mccv,num_candidates,writer_queue):
     train_neg_orig,
     synth_adasyn_pos,
     synth_adasyn_neg,
+    test_X,
+    test_y,
     num_synths_needed,
     iter_mccv,
     code_adasyn,
@@ -322,18 +355,19 @@ if __name__ == '__main__':
 
     parser=argparse.ArgumentParser()
 
-    parser.add_argument("-nmccv","--num_mccv",help="number of monte carlo crossvalidation splits", type=int, default=1000,)
+    parser.add_argument("-nmccv","--num_mccv",help="number of monte carlo crossvalidation splits", type=int, default=1,)
     parser.add_argument("-nc","--num_cand",help="number of candidates generated from parent points", type=int, default=2000,)
-    parser.add_argument("-uk","--umap_k",help="umap k", type=int, default=30,)
+    parser.add_argument("-uk","--umap_k",help="umap k", type=int, default=30,nargs='+')
     parser.add_argument("-kdk","--kdens_k",help="kdens_k", type=int, default=30,)
-    parser.add_argument("-gnstd","--gnoise_std",help="standard dev gaussian noise", type=int, default=0.01,)
+    parser.add_argument("-gnstd","--gnoise_std",help="standard dev gaussian noise", type=int, default=0.01,nargs='+')
     parser.add_argument("-i","--input",help="input data",type=str,required=True)
     parser.add_argument("-o","--outdir",help="output directory",type=str,required=True)
 
     args=parser.parse_args()
 
     path=args.input
-
+    dsname = path.split("/")[-1]
+    dsname = dsname.split(".")[0]
     csv_out_name=args.outdir+dsname+"_eval.csv"
 
     data=preprocessing(path)
@@ -341,15 +375,26 @@ if __name__ == '__main__':
     num_mccv=args.num_mccv
 
     num_candidates=args.num_cand
+
+    if type(args.gnoise_std)==float:
+        lst_noise_std=[args.gnoise_std]
+    else:
+        lst_noise_std=args.gnoise_std
+
+    if type(args.gnoise_std)==float:
+        lst_k=[args.umap_k]
+    else:
+        lst_k=args.gnoise_std
     #multiproessing part############################################################
 
     processes=[]
+    writer_queue=Queue()
 
-    write_process=multiprocessing.Process(target=write_to_csv , args=(writer_queue, csv_out_name))
+    write_process=Process(target=writer , args=(writer_queue, csv_out_name))
 
     #start num_mccv processes:
     for iter_mccv in range(num_mccv):
-        p=multiprocessing.Process(target=PIPE,args=(data,iter_mccv,num_candidates,writer_queue))
+        p=Process(target=PIPE,args=(data,iter_mccv,num_candidates,lst_noise_std,lst_k,writer_queue))
         p.start()
         processes.append(p)
 

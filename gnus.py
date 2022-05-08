@@ -1,24 +1,29 @@
 import numpy as np
 from sklearn.preprocessing import MinMaxScaler
 import csv
-def gnus(data,std_gaussian_noise,num_candidates):
+def gnus(scaled_data,std_gaussian_noise,num_candidates,):
 
     mask_pos=(scaled_data[:, 0] == 1)
     mask_neg=(scaled_data[:, 0] == 0)
+
+    num_features=scaled_data.shape[1]-1
+
+    X_pos=scaled_data[mask_pos][:,1:]
+    X_neg=scaled_data[mask_neg][:,1:]
 
     rng=np.random.default_rng()
 
     synth_pos=np.column_stack(
     (
     np.ones(num_candidates),
-    rng.choice(X_pos,num_candidates)+rng.normal(0,std,size=(num_candidates,num_features))
+    rng.choice(X_pos,num_candidates)+rng.normal(0,std_gaussian_noise,size=(num_candidates,num_features))
     )
     )
 
     synth_neg=np.column_stack(
     (
     np.zeros(num_candidates),
-    rng.choice(X_neg,num_candidates)+rng.normal(0,std,size=(num_candidates,num_features))
+    rng.choice(X_neg,num_candidates)+rng.normal(0,std_gaussian_noise,size=(num_candidates,num_features))
     )
     )
     return synth_pos,synth_neg
