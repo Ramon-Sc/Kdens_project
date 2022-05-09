@@ -70,8 +70,12 @@ def split(data,k):
 
         #prevent num of pos or neg examples in train set <= k (nearest neighbors)
         def kcheck(y,lst_k):
+            ytr=y[idx_train]
+            yte=y[idx_test]
             for k in lst_k:
-                if sum(y) <= k or y.shape-sum(y) <= k:
+                if sum(ytr) <= k or ytr.shape-sum(ytr) <= k:
+                    return True
+                elif sum(yte) <= k or yte.shape-sum(yte) <= k:
                     return True
             return False
 
@@ -207,11 +211,12 @@ def writer(writer_queue,csv_out_name):
         writer= csv.writer(f)
         writer.writerow(["iter_mccv","code_synthonly","code_aug","code_model","noise_std","k","roc_auc","auc_pr","f1","mccoef","num_train_pos_orig","num_train_neg_orig","num_test_pos","num_test_neg"])
         while True:
-            try:
-                row=writer_queue.get()
-                writer.writerow(row)
-            except:
+            row=writer_queue.get()
+
+            #None as "done" sentinel
+            if row is None:
                 break
+            writer.writerow(row)
 
 def PIPE(data,iter_mccv,num_candidates,lst_noise_std,lst_k,writer_queue):
 
@@ -252,29 +257,29 @@ def PIPE(data,iter_mccv,num_candidates,lst_noise_std,lst_k,writer_queue):
 
             # using the same k for umap and subsequent kdens since low dim k nn are positioned according to high dim k nn
             # theres probably no point in this function having to "k" arguments but here we are..
-            try:
-                synth_kdens_pos,synth_kdens_neg=kdens_augment(scaled_data_1,num_candidates,k,k,noise_std)
+        #try:
+            synth_kdens_pos,synth_kdens_neg=kdens_augment(scaled_data_1,num_candidates,k,k,noise_std)
 
-                #rescale
-                synth_kdens_pos,synth_kdens_neg=map(scaler_1.inverse_transform,[synth_kdens_pos,synth_kdens_neg])
+            #rescale
+            synth_kdens_pos,synth_kdens_neg=map(scaler_1.inverse_transform,[synth_kdens_pos,synth_kdens_neg])
 
-                synth_only_splitter(
-                writer_queue,
-                train_pos_orig,
-                train_neg_orig,
-                synth_kdens_pos,
-                synth_kdens_neg,
-                test_X,
-                test_y,
-                num_synths_needed,
-                iter_mccv,
-                code_kdens,
-                noise_std,
-                k
-                )
+            synth_only_splitter(
+            writer_queue,
+            train_pos_orig,
+            train_neg_orig,
+            synth_kdens_pos,
+            synth_kdens_neg,
+            test_X,
+            test_y,
+            num_synths_needed,
+            iter_mccv,
+            code_kdens,
+            noise_std,
+            k
+            )
 
-            except:
-                print("kdens failed")
+        #except:
+            #print("kdens failed")
 
 
     # B) gnus with different noise levels
@@ -399,14 +404,21 @@ def PIPE(data,iter_mccv,num_candidates,lst_noise_std,lst_k,writer_queue):
     #[--y_pred_lr--],[--y_pred_rdf--],...
     pred_labels_tup=model_predict(test_X,clf_lr,clf_rdf,clf_svm_lin,clf_svm_rbf,clf_svm_poly)
     code_synthonly=0
-    code_aug=0
-    code_model=4
+    code_aug=4
     noise_std=0
     k=0
+
+    #metadata
+    num_train_pos_orig=train_pos_orig.shape[0]
+    num_train_neg_orig=train_neg_orig.shape[0]
+    num_test_pos=sum(test_y)
+    num_test_neg=test_y.shape[0]-num_test_pos
+
     #model evaluation
     for code_model,pred_labels in enumerate(pred_labels_tup):
         scores=evaluate(pred_labels,test_y)
         csv_row=np.append((iter_mccv,code_synthonly,code_aug,code_model,noise_std,k),scores)
+        csv_row=np.append(csv_row,[num_train_pos_orig,num_train_neg_orig,num_test_pos,num_test_neg])
         writer_queue.put(csv_row)
 
 
@@ -415,7 +427,7 @@ if __name__ == '__main__':
 
     parser=argparse.ArgumentParser()
 
-    parser.add_argument("-nmccv","--num_mccv",help="number of monte carlo crossvalidation splits", type=int, default=100,)
+    parser.add_argument("-nmccv","--num_mccv",help="number of monte carlo crossvalidation splits", type=int, default=1,)
     parser.add_argument("-nc","--num_cand",help="number of candidates generated from parent points", type=int, default=2000,)
     parser.add_argument("-uk","--umap_k",help="umap k", type=int, default=30,nargs='+')
     #parser.add_argument("-kdk","--kdens_k",help="kdens_k", type=int, default=30,)
@@ -436,15 +448,16 @@ if __name__ == '__main__':
 
     num_candidates=args.num_cand
 
-    if type(args.gnoise_std)==float:
-        lst_noise_std=[args.gnoise_std]
-    else:
+    #if only a single value is passed for k or gnoise (both nargs="+") then looping over vaule (which is not iterable) will throw an error
+    if isinstance(args.gnoise_std,list):
         lst_noise_std=args.gnoise_std
-
-    if type(args.gnoise_std)==float:
-        lst_k=[args.umap_k]
     else:
-        lst_k=args.gnoise_std
+        lst_noise_std=[args.gnoise_std]
+
+    if isinstance(args.umap_k,list):
+        lst_k=args.umap_k
+    else:
+        lst_k=[args.umap_k]
     #multiproessing part############################################################
 
     processes=[]
@@ -464,5 +477,6 @@ if __name__ == '__main__':
     for process in processes:
         process.join()
 
+    writer_queue.put(None)
     #end write process
     write_process.join()

@@ -106,7 +106,7 @@ def dim_reduction(
     umap_k,
     kdens_k
     ):
-    print("running UMAP...")
+    
 
     data = np.vstack((X_pos,X_neg,candidates))
 
