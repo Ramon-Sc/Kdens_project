@@ -33,6 +33,10 @@ def kdens_augment(
     X_pos = scaled_data[mask_pos,1:]
     X_neg = scaled_data[mask_neg,1:]
 
+    if X_pos.shape[0] <= umap_k or X_neg.shape[0] <= umap_k or X_pos.shape[0] <= kdens_k or X_neg.shape[0] <= kdens_k:
+        print("number of examples in one class smaller than value for k nn")
+        return 0
+
     num_pos = X_pos.shape[0]
     num_neg = X_neg.shape[0]
 
@@ -103,6 +107,7 @@ def dim_reduction(
     kdens_k
     ):
     print("running UMAP...")
+
     data = np.vstack((X_pos,X_neg,candidates))
 
     fit = umap.UMAP(densmap=True,n_neighbors=umap_k)

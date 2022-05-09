@@ -49,7 +49,7 @@ def preprocessing(path):
     return data
 
 #1 MCCV Split
-def split(data):
+def split(data,k):
 
     X=data[:,1:]
     y=data[:,0]
@@ -68,8 +68,17 @@ def split(data):
         rs=ShuffleSplit(n_splits=1,test_size=test_size)
         idx_train,idx_test=next(rs.split(X))
 
-        #print("y-idx-train",y[idx_train])
-        #print("y_idx_test",y[idx_test])
+        #prevent num of pos or neg examples in train set <= k (nearest neighbors)
+        def kcheck(y,lst_k):
+            for k in lst_k:
+                if sum(y) <= k or y.shape-sum(y) <= k:
+                    return True
+            return False
+
+        if kcheck(y,lst_k):
+            print("zero")
+            continue
+
         #prevent empty training or test set
         if idx_train.shape == 0 or idx_test.shape == 0:
             print("one")
@@ -179,18 +188,30 @@ def synth_only_splitter(
         #[--y_pred_lr--],[--y_pred_rdf--],...
         pred_labels_tup=model_predict(test_X,clf_lr,clf_rdf,clf_svm_lin,clf_svm_rbf,clf_svm_poly)
 
+        #metadata
+        num_train_pos_orig=train_pos_orig.shape[0]
+        num_train_neg_orig=train_neg_orig.shape[0]
+        num_test_pos=sum(test_y)
+        num_test_neg=test_y.shape[0]-num_test_pos
+
         #model evaluation
         for code_model,pred_labels in enumerate(pred_labels_tup):
             scores=evaluate(pred_labels,test_y)
-            csv_row=np.append((iter_mccv,code_synthonly,code_aug,code_model,noise_std,k),scores)
+            csv_row=np.append((iter_mccv,code_synthonly,code_aug,code_model,noise_std,k),scores,)
+            csv_row=np.append(csv_row,[num_train_pos_orig,num_train_neg_orig,num_test_pos,num_test_neg])
             writer_queue.put(csv_row)
 
 def writer(writer_queue,csv_out_name):
+
     with open (csv_out_name,"w+") as f:
         writer= csv.writer(f)
-        row=writer_queue.get()
-
-        writer.writerow(row)
+        writer.writerow(["iter_mccv","code_synthonly","code_aug","code_model","noise_std","k","roc_auc","auc_pr","f1","mccoef","num_train_pos_orig","num_train_neg_orig","num_test_pos","num_test_neg"])
+        while True:
+            try:
+                row=writer_queue.get()
+                writer.writerow(row)
+            except:
+                break
 
 def PIPE(data,iter_mccv,num_candidates,lst_noise_std,lst_k,writer_queue):
 
@@ -206,7 +227,7 @@ def PIPE(data,iter_mccv,num_candidates,lst_noise_std,lst_k,writer_queue):
     code_adasyn=3
     code_null=4
 #1 mccv split###################################################################
-    train,test=split(data)
+    train,test=split(data,lst_k)
 
     test_X=test[:,1:]
     test_y=test[:,0]
@@ -231,36 +252,39 @@ def PIPE(data,iter_mccv,num_candidates,lst_noise_std,lst_k,writer_queue):
 
             # using the same k for umap and subsequent kdens since low dim k nn are positioned according to high dim k nn
             # theres probably no point in this function having to "k" arguments but here we are..
-            synth_kdens_pos,synth_kdens_neg=kdens_augment(scaled_data_1,num_candidates,k,k,noise_std)
+            try:
+                synth_kdens_pos,synth_kdens_neg=kdens_augment(scaled_data_1,num_candidates,k,k,noise_std)
 
-            #rescale
-            synth_kdens_pos,synth_kdens_neg=map(scaler_1.inverse_transform,[synth_kdens_pos,synth_kdens_neg])
+                #rescale
+                synth_kdens_pos,synth_kdens_neg=map(scaler_1.inverse_transform,[synth_kdens_pos,synth_kdens_neg])
 
+                synth_only_splitter(
+                writer_queue,
+                train_pos_orig,
+                train_neg_orig,
+                synth_kdens_pos,
+                synth_kdens_neg,
+                test_X,
+                test_y,
+                num_synths_needed,
+                iter_mccv,
+                code_kdens,
+                noise_std,
+                k
+                )
 
-            synth_only_splitter(
-            writer_queue,
-            train_pos_orig,
-            train_neg_orig,
-            synth_kdens_pos,
-            synth_kdens_neg,
-            test_X,
-            test_y,
-            num_synths_needed,
-            iter_mccv,
-            code_kdens,
-            noise_std,
-            k
-            )
-
+            except:
+                print("kdens failed")
 
 
     # B) gnus with different noise levels
     for noise_std in lst_noise_std:
+        print("running GNUS")
         synth_gnus_pos,synth_gnus_neg=gnus(scaled_data_1,noise_std,num_candidates)
         #rescale
         synth_gnus_pos,synth_gnus_neg=map(scaler_1.inverse_transform,[synth_gnus_pos,synth_gnus_neg])
 
-        #k=0 since there is no use of a k value in gnus but i didnt want to put N.A. in csv
+        #k=0 since there is no use of a k value in gnus but didnt want to put N.A. in csv
         k=0
 
         #rest of pipe stuff and "to csv" eventually
@@ -280,26 +304,35 @@ def PIPE(data,iter_mccv,num_candidates,lst_noise_std,lst_k,writer_queue):
         )
 
 
-
     #smote and adasyn need X and y to be seperated:
     scaled_data_1_X=scaled_data_1[:,1:]
     scaled_data_1_y=scaled_data_1[:,0]
     #params
     k=5
     noise_std=0
-    n_samples_new=1000
-    ratio={1:n_samples_new,0:n_samples_new}
+    #force imblearns smote and adasyn to create 1000 synth samples
+    n_samples_new=num_neg+1000
+    sampling_strategy={1:n_samples_new,0:n_samples_new}
+
+    #to get synth samples out of smote/adasyn output
+    orig_data_set = set([tuple(example) for example in scaled_data_1])
 
 
     # C) SMOTE
-    smote=SMOTE(k_neighbors=k,ratio=ratio)
-    X_smote,y_smote=smote.fit_sample(scaled_data_1_X,scaled_data_1_y)
+    smote=SMOTE(k_neighbors=k,sampling_strategy=sampling_strategy)
+    X_smote,y_smote=smote.fit_resample(scaled_data_1_X,scaled_data_1_y)
     synth_smote=np.column_stack((y_smote,X_smote))
+
+    #workaround because imblearn throws synth and orig samples together
+    synth_smote_set = set([tuple(example) for example in synth_smote])
+    synth_smote_set.difference_update(orig_data_set)
+    synth_smote=np.array([np.array(x) for x in synth_smote_set])
+
 
     #retrieve pos and neg
     mask_pos=(synth_smote[:,0] == 1)
     mask_neg=(synth_smote[:,0] == 0)
-    syth_smote_pos=synth_smote[mask_pos]
+    synth_smote_pos=synth_smote[mask_pos]
     synth_smote_neg=synth_smote[mask_neg]
 
     #rescaling
@@ -322,11 +355,15 @@ def PIPE(data,iter_mccv,num_candidates,lst_noise_std,lst_k,writer_queue):
     )
 
 
-
     # D) ADASYN
-    adasyn=ADASYN(n_neighbors=k,ratio=ratio)
-    X_adasyn,y_adasyn=adasyn.fit_sample(scaled_data_1_X,scaled_data_1_y)
+    adasyn=ADASYN(n_neighbors=k,sampling_strategy=sampling_strategy)
+    X_adasyn,y_adasyn=adasyn.fit_resample(scaled_data_1_X,scaled_data_1_y)
     synth_adasyn=np.column_stack((y_adasyn,X_adasyn))
+
+    #workoround because imblearn throws synth and orig samples together
+    synth_adasyn_set = set([tuple(example) for example in synth_adasyn])
+    synth_adasyn_set.difference_update(orig_data_set)
+    synth_adasyn=np.array([np.array(x) for x in synth_adasyn_set])
 
     #retrieve pos and neg
     mask_pos=(synth_adasyn[:,0] == 1)
@@ -350,16 +387,39 @@ def PIPE(data,iter_mccv,num_candidates,lst_noise_std,lst_k,writer_queue):
     )
 
 
+    # E) NULL
+    train_data=np.row_stack((train_pos_orig,train_neg_orig))
+    train_X=train_data[:,1:]
+    train_y=train_data[:,0]
+
+    #model training
+    clf_lr,clf_rdf,clf_svm_lin,clf_svm_rbf,clf_svm_poly=model_train(train_X,train_y)
+
+    #model predictions
+    #[--y_pred_lr--],[--y_pred_rdf--],...
+    pred_labels_tup=model_predict(test_X,clf_lr,clf_rdf,clf_svm_lin,clf_svm_rbf,clf_svm_poly)
+    code_synthonly=0
+    code_aug=0
+    code_model=4
+    noise_std=0
+    k=0
+    #model evaluation
+    for code_model,pred_labels in enumerate(pred_labels_tup):
+        scores=evaluate(pred_labels,test_y)
+        csv_row=np.append((iter_mccv,code_synthonly,code_aug,code_model,noise_std,k),scores)
+        writer_queue.put(csv_row)
+
+
 
 if __name__ == '__main__':
 
     parser=argparse.ArgumentParser()
 
-    parser.add_argument("-nmccv","--num_mccv",help="number of monte carlo crossvalidation splits", type=int, default=1,)
+    parser.add_argument("-nmccv","--num_mccv",help="number of monte carlo crossvalidation splits", type=int, default=100,)
     parser.add_argument("-nc","--num_cand",help="number of candidates generated from parent points", type=int, default=2000,)
     parser.add_argument("-uk","--umap_k",help="umap k", type=int, default=30,nargs='+')
-    parser.add_argument("-kdk","--kdens_k",help="kdens_k", type=int, default=30,)
-    parser.add_argument("-gnstd","--gnoise_std",help="standard dev gaussian noise", type=int, default=0.01,nargs='+')
+    #parser.add_argument("-kdk","--kdens_k",help="kdens_k", type=int, default=30,)
+    parser.add_argument("-gnstd","--gnoise_std",help="standard dev gaussian noise", type=float, default=0.01,nargs='+')
     parser.add_argument("-i","--input",help="input data",type=str,required=True)
     parser.add_argument("-o","--outdir",help="output directory",type=str,required=True)
 
