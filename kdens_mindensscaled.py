@@ -23,7 +23,8 @@ def kdens_augment(
     scaled_data,
     num_candidates,
     umap_k,kdens_k,
-    std_gaussian_noise
+    std_gaussian_noise,
+    p_min_dens,
     ):
     #retrieve positive and negative examples from data via boolean mask
     mask_pos = (scaled_data[:, 0] == 1)
@@ -34,7 +35,7 @@ def kdens_augment(
     X_neg = scaled_data[mask_neg,1:]
 
     if X_pos.shape[0] <= umap_k or X_neg.shape[0] <= umap_k or X_pos.shape[0] <= kdens_k or X_neg.shape[0] <= kdens_k:
-        print("number of examples in one class smaller than value for k nn")
+        print("Error: number of examples in one class smaller than value for k nn returning 0")
         return 0
 
     num_pos = X_pos.shape[0]
@@ -68,6 +69,7 @@ def kdens_augment(
     candidates_transformed,
     candidates,
     kdens_k,
+    p_min_dens,
     MIN_dens_pos,
     MIN_dens_neg,
     )
@@ -106,7 +108,7 @@ def dim_reduction(
     umap_k,
     kdens_k
     ):
-    
+
 
     data = np.vstack((X_pos,X_neg,candidates))
 
@@ -115,16 +117,35 @@ def dim_reduction(
     ###
 
 
-    MIN_dens_pos = np.sort(
-    pairwise_distances(u[:num_pos,:], metric='euclidean')[:,-kdens_k-1:].mean(axis=0)
-    )[-1]
+    #min_dens == max_avg_dist
 
-    MIN_dens_neg = np.sort(
-    pairwise_distances(u[num_pos:num_pos+num_neg,:], metric='euclidean')[:,-kdens_k-1:].mean(axis=0)
-    )[-1]
+    # MIN_dens_pos_new = (
+    #     np.sort(
+    #     pairwise_distances(
+    #     u[:num_pos,:]),axis=0)
+    #     [:,-kdens_k:]).mean(axis=0)
+    # print("mindensnew",MIN_dens_pos_new)
+
+    # MIN_dens_pos = np.sort(
+    # pairwise_distances(u[:num_pos,:], metric='euclidean')[:,-kdens_k:].mean(axis=0)
+    # )[-1]
+    #MIN_dens_neg = np.sort(
+    # pairwise_distances(u[num_pos:num_pos+num_neg,:], metric='euclidean')[:,-kdens_k:].mean(axis=0)
+    # )[-1]
+
+    pd_pos=pairwise_distances(u[:num_pos,:], metric='euclidean')
+    MIN_dens_pos = max(np.sort(pd_pos,axis=0)[:kdens_k,:].mean(axis=0))
+
+
+    pd_neg=pairwise_distances(u[num_pos:num_pos+num_neg], metric='euclidean')
+    MIN_dens_neg = max(np.sort(pd_neg,axis=0)[:kdens_k,:].mean(axis=0))
+
+    print(MIN_dens_pos)
+    print(MIN_dens_neg)
 
 
     ############################################################################
+    #plotting semi helpfull for debugging etc
     # from matplotlib import colors
     # import matplotlib.pyplot as plt
     # num_candidates_pos = int((candidates.shape[0])/2)
@@ -145,19 +166,8 @@ def dim_reduction(
 
     return u[:num_pos],u[num_pos:num_pos+num_neg],u[num_pos+num_neg:],MIN_dens_pos,MIN_dens_neg
 
-def inclusion_choice(mean_dist_to_k_ex,MIN_dens):
 
-    '''
-    very simple linear choice function
-    probably better to have a zero-mean gaussian where std_dev is chosen such that:
-        gaussian(max_avg_dist_to_k_nn)  =  some multiple (<1) of max(gaussian)
-    '''
-    if mean_dist_to_k_ex < MIN_dens:
-        scaled_mean_dist_to_k_ex = mean_dist_to_k_ex/MIN_dens
-    else:
-        scaled_mean_dist_to_k_ex = 1
 
-    p = [1-scaled_mean_dist_to_k_ex,scaled_mean_dist_to_k_ex]
 
     return np.random.choice([True,False],p = p)
 
@@ -168,6 +178,7 @@ def select_candidates(
     candidates_transformed,
     candidates,
     kdens_k,
+    p_min_dens,
     MIN_dens_pos,
     MIN_dens_neg,
     ):
@@ -192,12 +203,40 @@ def select_candidates(
     #
     # mean_dist_to_k_pos[idx_losers_pos] = MIN_dens_pos
     # mean_dist_to_k_neg[idx_losers_neg] = MIN_dens_neg
+    def inclusion_choice(mean_dist_to_k_ex,MIN_dens,p_min_dens):
+
+        # '''
+        # very simple linear choice function
+        # '''
+        # if mean_dist_to_k_ex < MIN_dens:
+        #     scaled_mean_dist_to_k_ex = mean_dist_to_k_ex/MIN_dens
+        # else:
+        #     scaled_mean_dist_to_k_ex = 1
+        #
+        # p = [1-scaled_mean_dist_to_k_ex,scaled_mean_dist_to_k_ex]
+
+        def gaussian(mean,sigma,x):
+            return np.exp(-0.5*((x-mean)**2)/sigma**2) / (sigma*math.sqrt(2*math.pi))
+
+        sigma=math.sqrt(-0.5*(MIN_dens**2)/(np.log(p_min_dens)))
+        mean=0
+        max_gaussian=gaussian(mean,sigma,mean)
+
+        p_gaussian=gaussian(mean,sigma,mean_dist_to_k_ex)
+        p_inclusion=p_gaussian/max_gaussian
+        p = [p_inclusion,1-p_inclusion]
+
+        return np.random.choice([True,False],p = p)
+
+        print (mean_dist_to_k_ex)
+        print("p_incl_gauss: ",p_inclusion)
+
 
     v_inclusion_choice = np.vectorize(inclusion_choice)
 
     #boolean mask with values from inclusion choice - True for candidates whose density is "high enough"
-    mask_winners_pos = v_inclusion_choice(mean_dist_to_k_pos,MIN_dens_pos)
-    mask_winners_neg = v_inclusion_choice(mean_dist_to_k_neg,MIN_dens_neg)
+    mask_winners_pos = v_inclusion_choice(mean_dist_to_k_pos,MIN_dens_pos,p_min_dens)
+    mask_winners_neg = v_inclusion_choice(mean_dist_to_k_neg,MIN_dens_neg,p_min_dens)
 
     #caveat: hacky implementation: the sets "winners_pos" and "winners_neg" can theoretically intersect i.e. the same example can be assigned to both classes
     winners_pos = candidates[mask_winners_pos]
@@ -221,11 +260,12 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("-nc","--num_cand",help = "number of candidates generated from parent points", type=int, default=1000,)
+    parser.add_argument("-nc","--num_cand",help = "number of candidates generated from parent points", type=int, default=100,)
     parser.add_argument("-uk","--umap_k",help="umap k", type=int, default=30,)
     parser.add_argument("-kdk","--kdens_k",help="kdens_k", type=int, default=30,)
-    parser.add_argument("-gnstd","--gnoise_std",help="standard dev gaussian noise", type=int, default=0.01,)
+    parser.add_argument("-gnstd","--gnoise_std",help="standard dev gaussian noise", type=float, default=0.01,)
     parser.add_argument("-i","--input",help="input data",type=str,required=True)
+    parser.add_argument("-pmd","--p_min_dens",help="prob. of incl. of candidate with dens = min_dens", type=float, default=0.01,)
 
     args = parser.parse_args()
 
@@ -240,14 +280,14 @@ if __name__ == '__main__':
     kdens_k = args.kdens_k
 
     std_gaussian_noise = args.gnoise_std
-
+    p_min_dens=args.p_min_dens
     path_csv_outdir = os.getcwd()
 
 #preprocessing##################################################################
     scaled_data,scaler = preprocessing(path)
 
 #kdens_augmentation#############################################################
-    synth_pos,synth_neg = kdens_augment(scaled_data,num_candidates,umap_k,kdens_k,std_gaussian_noise)
+    synth_pos,synth_neg = kdens_augment(scaled_data,num_candidates,umap_k,kdens_k,std_gaussian_noise,p_min_dens)
 
     synth_pos = scaler.inverse_transform(synth_pos)
     synth_neg = scaler.inverse_transform(synth_neg)
@@ -265,6 +305,7 @@ if __name__ == '__main__':
     +"_"+str(umap_k)
     +"_"+str(kdens_k)
     +"_"+str(std_gaussian_noise)
+    +"_"+str(p_min_dens)
     +".csv"
     ,"w+") as f:
 

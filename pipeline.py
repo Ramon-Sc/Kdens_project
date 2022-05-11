@@ -154,7 +154,8 @@ def synth_only_splitter(
     iter_mccv,
     code_aug,
     noise_std,
-    k
+    k,
+    p_min_dens
     ):
 
     num_synth_pos=synth_pos.shape[0]
@@ -201,7 +202,7 @@ def synth_only_splitter(
         #model evaluation
         for code_model,pred_labels in enumerate(pred_labels_tup):
             scores=evaluate(pred_labels,test_y)
-            csv_row=np.append((iter_mccv,code_synthonly,code_aug,code_model,noise_std,k),scores,)
+            csv_row=np.append((iter_mccv,code_synthonly,code_aug,code_model,noise_std,k,p_min_dens),scores,)
             csv_row=np.append(csv_row,[num_train_pos_orig,num_train_neg_orig,num_test_pos,num_test_neg])
             writer_queue.put(csv_row)
 
@@ -209,7 +210,7 @@ def writer(writer_queue,csv_out_name):
 
     with open (csv_out_name,"w+") as f:
         writer= csv.writer(f)
-        writer.writerow(["iter_mccv","code_synthonly","code_aug","code_model","noise_std","k","roc_auc","auc_pr","f1","mccoef","num_train_pos_orig","num_train_neg_orig","num_test_pos","num_test_neg"])
+        writer.writerow(["iter_mccv","code_synthonly","code_aug","code_model","noise_std","k","p_min_dens","roc_auc","auc_pr","f1","mccoef","num_train_pos_orig","num_train_neg_orig","num_test_pos","num_test_neg"])
         while True:
             row=writer_queue.get()
 
@@ -254,32 +255,33 @@ def PIPE(data,iter_mccv,num_candidates,lst_noise_std,lst_k,writer_queue):
     # A) kdens with param combinations
     for noise_std in lst_noise_std:
         for k in lst_k:
+            for p_min_dens in lst_p_min_dens:
+                # using the same k for umap and subsequent kdens since low dim k nn are positioned according to high dim k nn
+                # theres probably no point in this function having to "k" arguments but here we are..
+            #try:
+                synth_kdens_pos,synth_kdens_neg=kdens_augment(scaled_data_1,num_candidates,k,k,noise_std,p_min_dens)
 
-            # using the same k for umap and subsequent kdens since low dim k nn are positioned according to high dim k nn
-            # theres probably no point in this function having to "k" arguments but here we are..
-        #try:
-            synth_kdens_pos,synth_kdens_neg=kdens_augment(scaled_data_1,num_candidates,k,k,noise_std)
+                #rescale
+                synth_kdens_pos,synth_kdens_neg=map(scaler_1.inverse_transform,[synth_kdens_pos,synth_kdens_neg])
 
-            #rescale
-            synth_kdens_pos,synth_kdens_neg=map(scaler_1.inverse_transform,[synth_kdens_pos,synth_kdens_neg])
+                synth_only_splitter(
+                writer_queue,
+                train_pos_orig,
+                train_neg_orig,
+                synth_kdens_pos,
+                synth_kdens_neg,
+                test_X,
+                test_y,
+                num_synths_needed,
+                iter_mccv,
+                code_kdens,
+                noise_std,
+                k,
+                p_min_dens
+                )
 
-            synth_only_splitter(
-            writer_queue,
-            train_pos_orig,
-            train_neg_orig,
-            synth_kdens_pos,
-            synth_kdens_neg,
-            test_X,
-            test_y,
-            num_synths_needed,
-            iter_mccv,
-            code_kdens,
-            noise_std,
-            k
-            )
-
-        #except:
-            #print("kdens failed")
+            #except:
+                #print("kdens failed")
 
 
     # B) gnus with different noise levels
@@ -291,7 +293,7 @@ def PIPE(data,iter_mccv,num_candidates,lst_noise_std,lst_k,writer_queue):
 
         #k=0 since there is no use of a k value in gnus but didnt want to put N.A. in csv
         k=0
-
+        p_min_dens=0
         #rest of pipe stuff and "to csv" eventually
         synth_only_splitter(
         writer_queue,
@@ -305,7 +307,8 @@ def PIPE(data,iter_mccv,num_candidates,lst_noise_std,lst_k,writer_queue):
         iter_mccv,
         code_gnus,
         noise_std,
-        k
+        k,
+        p_min_dens
         )
 
 
@@ -315,6 +318,7 @@ def PIPE(data,iter_mccv,num_candidates,lst_noise_std,lst_k,writer_queue):
     #params
     k=5
     noise_std=0
+    p_min_dens=0
     #force imblearns smote and adasyn to create 1000 synth samples
     n_samples_new=num_neg+1000
     sampling_strategy={1:n_samples_new,0:n_samples_new}
@@ -356,7 +360,8 @@ def PIPE(data,iter_mccv,num_candidates,lst_noise_std,lst_k,writer_queue):
     iter_mccv,
     code_smote,
     noise_std,
-    k
+    k,
+    p_min_dens
     )
 
 
@@ -388,7 +393,8 @@ def PIPE(data,iter_mccv,num_candidates,lst_noise_std,lst_k,writer_queue):
     iter_mccv,
     code_adasyn,
     noise_std,
-    k
+    k,
+    p_min_dens
     )
 
 
@@ -417,7 +423,7 @@ def PIPE(data,iter_mccv,num_candidates,lst_noise_std,lst_k,writer_queue):
     #model evaluation
     for code_model,pred_labels in enumerate(pred_labels_tup):
         scores=evaluate(pred_labels,test_y)
-        csv_row=np.append((iter_mccv,code_synthonly,code_aug,code_model,noise_std,k),scores)
+        csv_row=np.append((iter_mccv,code_synthonly,code_aug,code_model,noise_std,k,p_min_dens),scores)
         csv_row=np.append(csv_row,[num_train_pos_orig,num_train_neg_orig,num_test_pos,num_test_neg])
         writer_queue.put(csv_row)
 
@@ -430,7 +436,7 @@ if __name__ == '__main__':
     parser.add_argument("-nmccv","--num_mccv",help="number of monte carlo crossvalidation splits", type=int, default=1,)
     parser.add_argument("-nc","--num_cand",help="number of candidates generated from parent points", type=int, default=2000,)
     parser.add_argument("-uk","--umap_k",help="umap k", type=int, default=30,nargs='+')
-    #parser.add_argument("-kdk","--kdens_k",help="kdens_k", type=int, default=30,)
+    parser.add_argument("-pmd","--p_min_dens",help="prob. of incl. of candidate with dens = min_dens", type=int, default=0.1,nargs='+')
     parser.add_argument("-gnstd","--gnoise_std",help="standard dev gaussian noise", type=float, default=0.01,nargs='+')
     parser.add_argument("-i","--input",help="input data",type=str,required=True)
     parser.add_argument("-o","--outdir",help="output directory",type=str,required=True)
@@ -448,7 +454,7 @@ if __name__ == '__main__':
 
     num_candidates=args.num_cand
 
-    #if only a single value is passed for k or gnoise (both nargs="+") then looping over vaule (which is not iterable) will throw an error
+    #if only a single value is passed for k, p_min_dens or gnoise (nargs="+") then looping over vaule (which is not iterable) will throw an error
     if isinstance(args.gnoise_std,list):
         lst_noise_std=args.gnoise_std
     else:
@@ -458,6 +464,13 @@ if __name__ == '__main__':
         lst_k=args.umap_k
     else:
         lst_k=[args.umap_k]
+
+    if isinstance(args.p_min_dens,list):
+        lst_p_min_dens=args.p_min_dens
+    else:
+        lst_p_min_dens=[args.p_min_dens]
+
+
     #multiproessing part############################################################
 
     processes=[]
@@ -477,6 +490,7 @@ if __name__ == '__main__':
     for process in processes:
         process.join()
 
+    # end write process sentinel
     writer_queue.put(None)
     #end write process
     write_process.join()
