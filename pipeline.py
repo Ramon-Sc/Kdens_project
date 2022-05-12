@@ -433,10 +433,10 @@ if __name__ == '__main__':
 
     parser=argparse.ArgumentParser()
 
-    parser.add_argument("-nmccv","--num_mccv",help="number of monte carlo crossvalidation splits", type=int, default=1,)
+    parser.add_argument("-nmccv","--num_mccv",help="number of montecarlo crossvalidation splits", type=int, default=1,)
     parser.add_argument("-nc","--num_cand",help="number of candidates generated from parent points", type=int, default=2000,)
     parser.add_argument("-uk","--umap_k",help="umap k", type=int, default=30,nargs='+')
-    parser.add_argument("-pmd","--p_min_dens",help="prob. of incl. of candidate with dens = min_dens", type=int, default=0.1,nargs='+')
+    parser.add_argument("-pmd","--p_min_dens",help="prob. of incl. of candidate with dens = min_dens", type=float, default=0.1,nargs='+')
     parser.add_argument("-gnstd","--gnoise_std",help="standard dev gaussian noise", type=float, default=0.01,nargs='+')
     parser.add_argument("-i","--input",help="input data",type=str,required=True)
     parser.add_argument("-o","--outdir",help="output directory",type=str,required=True)
