@@ -1,3 +1,4 @@
+import time
 import argparse
 import csv
 import numpy as np
@@ -286,7 +287,6 @@ def PIPE(data,iter_mccv,num_candidates,lst_noise_std,lst_k,writer_queue):
 
     # B) gnus with different noise levels
     for noise_std in lst_noise_std:
-        print("running GNUS")
         synth_gnus_pos,synth_gnus_neg=gnus(scaled_data_1,noise_std,num_candidates)
         #rescale
         synth_gnus_pos,synth_gnus_neg=map(scaler_1.inverse_transform,[synth_gnus_pos,synth_gnus_neg])
@@ -431,6 +431,9 @@ def PIPE(data,iter_mccv,num_candidates,lst_noise_std,lst_k,writer_queue):
 
 if __name__ == '__main__':
 
+    #runtime
+    st = time.time()
+
     parser=argparse.ArgumentParser()
 
     parser.add_argument("-nmccv","--num_mccv",help="number of montecarlo crossvalidation splits", type=int, default=1,)
@@ -494,3 +497,8 @@ if __name__ == '__main__':
     writer_queue.put(None)
     #end write process
     write_process.join()
+
+    #runtime
+    et = time.time()
+    elapsed_time = et-st
+    print('Execution time: ',elapsed_time,'seconds')

@@ -228,10 +228,7 @@ def select_candidates(
 
         return np.random.choice([True,False],p = p)
 
-        print (mean_dist_to_k_ex)
-        print("p_incl_gauss: ",p_inclusion)
-
-
+        
     v_inclusion_choice = np.vectorize(inclusion_choice)
 
     #boolean mask with values from inclusion choice - True for candidates whose density is "high enough"
