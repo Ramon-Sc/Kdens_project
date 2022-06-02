@@ -140,8 +140,8 @@ def dim_reduction(
     pd_neg=pairwise_distances(u[num_pos:num_pos+num_neg], metric='euclidean')
     MIN_dens_neg = max(np.sort(pd_neg,axis=0)[:kdens_k,:].mean(axis=0))
 
-    print(MIN_dens_pos)
-    print(MIN_dens_neg)
+    #print(MIN_dens_pos)
+    #rint(MIN_dens_neg)
 
 
     ############################################################################
@@ -228,7 +228,7 @@ def select_candidates(
 
         return np.random.choice([True,False],p = p)
 
-        
+
     v_inclusion_choice = np.vectorize(inclusion_choice)
 
     #boolean mask with values from inclusion choice - True for candidates whose density is "high enough"
