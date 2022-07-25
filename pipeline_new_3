@@ -60,7 +60,7 @@ def split(data,lst_k):
     rng=np.random.default_rng()
 
     #try max 1000 splits
-    for i in range(1000):
+    for i in range(5000):
         #random split
         test_size=rng.integers(y.shape[0])
 
@@ -495,7 +495,7 @@ if __name__ == '__main__':
     write_process=Process(target=writer , args=(writer_queue, csv_out_name))
 
     #start at max max_processes processes:
-    max_processes=10
+    max_processes=8
     iter_mccv=0
 
     repeats = num_mccv // max_processes
