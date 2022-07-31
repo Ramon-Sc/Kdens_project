@@ -10,7 +10,7 @@ Inputs are required to be .csv files with the first row being empty or feature l
 and second column being binary class labels in the form of "0" or "1".
 
 Required python packages:
--numpy 
+- numpy 
 - math
 - sklearn.preprocessing 
 - sklearn.metrics
