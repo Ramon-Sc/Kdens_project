@@ -4,7 +4,7 @@ Kdens uses UMAP (McInnes2018) to sample synthetic data points based on a measure
 
 
 Usage:
-kdens.py [-h] [-nc NUM_CAND] [-uk UMAP_K] [-kdk KDENS_K] [-gnstd GNOISE_STD] -i INPUT [-pmd P_MIN_DENS]
+python3 kdens.py [-h] [-nc NUM_CAND] [-uk UMAP_K] [-kdk KDENS_K] [-gnstd GNOISE_STD] -i INPUT [-pmd P_MIN_DENS]
 
 Inputs are required to be .csv files with the first row being empty or feature labels, first column being empty or sample indicies 
 and second column being binary class labels in the form of "0" or "1".
