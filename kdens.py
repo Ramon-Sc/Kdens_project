@@ -111,24 +111,7 @@ def dim_reduction(
 
     fit = umap.UMAP(densmap=True,n_neighbors=umap_k)
     u = fit.fit_transform(data)
-    ###
-
-
-    #min_dens == max_avg_dist
-
-    # MIN_dens_pos_new = (
-    #     np.sort(
-    #     pairwise_distances(
-    #     u[:num_pos,:]),axis=0)
-    #     [:,-kdens_k:]).mean(axis=0)
-    # print("mindensnew",MIN_dens_pos_new)
-
-    # MIN_dens_pos = np.sort(
-    # pairwise_distances(u[:num_pos,:], metric='euclidean')[:,-kdens_k:].mean(axis=0)
-    # )[-1]
-    #MIN_dens_neg = np.sort(
-    # pairwise_distances(u[num_pos:num_pos+num_neg,:], metric='euclidean')[:,-kdens_k:].mean(axis=0)
-    # )[-1]
+    
 
     pd_pos=pairwise_distances(u[:num_pos,:], metric='euclidean')
     MIN_dens_pos = max(np.sort(pd_pos,axis=0)[:kdens_k,:].mean(axis=0))
