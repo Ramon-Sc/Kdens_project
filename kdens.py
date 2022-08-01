@@ -15,9 +15,6 @@ Data augmentation using Umaps density preserving feature "densmap"
 point of reference for level of synth sample validity:
  min(dens) in original data
 
-if dens_candidate <=  min(dens_orginal_points):
-        candidate.prob_of_inclusion_in_synthdata  =  0
-
 '''
 def kdens_augment(
     scaled_data,
@@ -140,9 +137,7 @@ def dim_reduction(
     pd_neg=pairwise_distances(u[num_pos:num_pos+num_neg], metric='euclidean')
     MIN_dens_neg = max(np.sort(pd_neg,axis=0)[:kdens_k,:].mean(axis=0))
 
-    #print(MIN_dens_pos)
-    #rint(MIN_dens_neg)
-
+   
 
     ############################################################################
     #plotting semi helpfull for debugging etc
